@@ -38,12 +38,69 @@ static const uint8_t *parse_ts_packet(const uint8_t *tspkt, uint16_t pid,
     return tspkt + 4;
 }
 
-#define TS_BUFSIZE_NUM_PACKETS 20
+typedef struct pes_assemble_ctx_
+{
+    uint8_t *buf;
+    size_t size;
+    size_t offset;
+    unsigned int in_pes;
+} pes_assemble_ctx;
 
-static void parse_pes_packet(const uint8_t *pkt, size_t size)
+typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size);
+
+static void parse_ttx(const uint8_t *pkt, size_t size)
 {
     printf("Received PES packet : %p, %zu\n", pkt, size);
 }
+
+static void assemble_pes_from_ts(pes_assemble_ctx *ctx, const uint8_t *ts_data,
+    uint16_t pid, pes_ready_fn pes_ready)
+{
+    unsigned int pusi;
+    const uint8_t *pes_data = parse_ts_packet(ts_data, pid, &pusi);
+    if(pes_data)
+    {
+        if(!ctx->in_pes && !pusi)
+        {
+            /* this will happen only when starting to read the TS and means that
+             * we got some TS packets that were a part of a PES packet whose
+             * beginning is not in our stream. */
+            return;
+        }
+        else if(!ctx->in_pes && pusi)
+        {
+            /* a new packet begins. write to the beginning of the buffer. no
+             * bounds check needed, since ctx->buf is guaranteed to be at least
+             * 2048 bytes. */
+            ctx->in_pes = 1;
+            memcpy(ctx->buf, pes_data, TS_PACKET_DATA_SIZE);
+            ctx->offset = TS_PACKET_DATA_SIZE;
+        }
+        else if(ctx->in_pes && !pusi)
+        {
+            /* continuation of PES data. copy the current contents to the packet
+             * buffer, and resize if necessary. */
+            if((ctx->offset + TS_PACKET_DATA_SIZE) > ctx->size)
+            {
+                ctx->size *= 2;
+                if((ctx->buf = realloc(ctx->buf, ctx->size)) == NULL) exit(2);
+            }
+            memcpy(ctx->buf + ctx->offset, pes_data, TS_PACKET_DATA_SIZE);
+            ctx->offset += TS_PACKET_DATA_SIZE;
+        }
+        else if(ctx->in_pes && pusi)
+        {
+            /* end of a packet that's currently being gathered. fire pes_ready
+             * with the current contents and copy the new packet's beginning
+             * into the beginning of the buffer. */
+            pes_ready(ctx->buf, ctx->offset);
+            memcpy(ctx->buf, pes_data, TS_PACKET_DATA_SIZE);
+            ctx->offset = TS_PACKET_DATA_SIZE;
+        }
+    }
+}
+
+#define TS_BUFSIZE_NUM_PACKETS 20
 
 /* try to read the TS and parse the TS headers, looking for packets with a
  * matching PID. assemble full PES packets from the found data, according to
@@ -54,67 +111,23 @@ static void read_ts(FILE *tsfile, uint16_t pid)
     uint8_t ts_pkts[TS_PACKET_SIZE * TS_BUFSIZE_NUM_PACKETS];
     size_t pkts_read;
     
-    /* whether we're currently assembling a PES or not. */
-    unsigned int in_pes = 0;
-    
-    /* buffer for the PES data. */
-    size_t pes_bufsize = 2048;
-    size_t pes_offset = 0;
-    uint8_t *pes_buf = malloc(pes_bufsize);
-    if(pes_buf == NULL) exit(2);
+    /* context for assembling the PES data. */
+    pes_assemble_ctx pes_ctx;
+    pes_ctx.size = 2048;
+    pes_ctx.offset = 0;
+    pes_ctx.in_pes = 0;
+    if((pes_ctx.buf = malloc(pes_ctx.size)) == NULL) exit(2);
     
     while((pkts_read = fread(ts_pkts, TS_PACKET_SIZE,
         TS_BUFSIZE_NUM_PACKETS, tsfile)) > 0)
     {
         for(size_t i = 0 ; i < pkts_read ; ++i)
         {
-            unsigned int pusi;
-            const uint8_t *pes_pkt = parse_ts_packet(
-                ts_pkts + (i * TS_PACKET_SIZE), pid, &pusi);
-            if(pes_pkt)
-            {
-                if(!in_pes && !pusi)
-                {
-                    /* first TS packet containing the beginning of a PES not yet
-                     * received. this will happen only when starting to read the
-                     * stream. */
-                    continue;
-                }
-                else if(!in_pes && pusi)
-                {
-                    /* a new packet begins. write to the beginning of the
-                     * buffer. no bounds check needed, since pes_buf is
-                     * guaranteed to be at least 2048 bytes. */
-                    in_pes = 1;
-                    memcpy(pes_buf, pes_pkt, TS_PACKET_DATA_SIZE);
-                    pes_offset = TS_PACKET_DATA_SIZE;
-                }
-                else if(in_pes && !pusi)
-                {
-                    /* continuation of PES data. copy the current contents to
-                     * the packet buffer, and resize if necessary. */
-                    if((pes_offset + TS_PACKET_DATA_SIZE) > pes_bufsize)
-                    {
-                        pes_bufsize *= 2;
-                        pes_buf = realloc(pes_buf, pes_bufsize);
-                        if(NULL == pes_buf) return;
-                    }
-                    memcpy(pes_buf + pes_offset, pes_pkt, TS_PACKET_DATA_SIZE);
-                    pes_offset += TS_PACKET_DATA_SIZE;
-                }
-                else if(in_pes && pusi)
-                {
-                    /* end of a packet that's currently gathered. pass it down
-                     * for processing and copy the current contents at the
-                     * beginning of the buffer. */
-                    parse_pes_packet(pes_buf, pes_offset);
-                    memcpy(pes_buf, pes_pkt, TS_PACKET_DATA_SIZE);
-                    pes_offset = TS_PACKET_DATA_SIZE;
-                }
-            }
+            assemble_pes_from_ts(&pes_ctx, ts_pkts + (i * TS_PACKET_SIZE), pid,
+                parse_ttx);
         }
     }
-    free(pes_buf);
+    free(pes_ctx.buf);
 }
 
 #undef TS_BUFSIZE_NUM_PACKETS
