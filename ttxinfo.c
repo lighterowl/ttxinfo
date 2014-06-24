@@ -13,14 +13,6 @@
  * discard all the ones that don't have such a header in parse_ts_packet. */
 #define TS_PACKET_DATA_SIZE 184
 
-typedef struct pes_assemble_ctx_
-{
-    uint8_t *buf;
-    size_t size;
-    size_t offset;
-    unsigned int in_pes;
-} pes_assemble_ctx;
-
 typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size, void *user_data);
 
 #define TTX_PES_PRINTF(x, ...) \
@@ -125,6 +117,14 @@ static const uint8_t *parse_ts_packet(const uint8_t *tspkt, uint16_t pid,
     /* ignore the continuity counter. */
     return tspkt + 4;
 }
+
+typedef struct pes_assemble_ctx_
+{
+    uint8_t *buf;
+    size_t size;
+    size_t offset;
+    unsigned int in_pes;
+} pes_assemble_ctx;
 
 static void assemble_pes_from_ts(pes_assemble_ctx *ctx, const uint8_t *ts_data,
     uint16_t pid, pes_ready_fn pes_ready, void *pes_ready_user_data)
