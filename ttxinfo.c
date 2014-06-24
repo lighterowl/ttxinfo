@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
+#include <arpa/inet.h>
 
 #define TS_PACKET_SIZE 188
 #define TS_SYNC_BYTE 0x47
@@ -11,6 +12,93 @@
 /* the following is valid only for packets with a 4-byte header. fortunately, we
  * discard all the ones that don't have such a header in parse_ts_packet. */
 #define TS_PACKET_DATA_SIZE 184
+
+typedef struct pes_assemble_ctx_
+{
+    uint8_t *buf;
+    size_t size;
+    size_t offset;
+    unsigned int in_pes;
+} pes_assemble_ctx;
+
+typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size, void *user_data);
+
+#define TTX_PES_PRINTF(x, ...) \
+do \
+{ \
+    printf("TTX_PES[%u] : " x, *ttx_pes_pkt_no - 1, __VA_ARGS__); \
+} while(0)
+
+#define TTX_PES_PRINT(x) \
+do \
+{ \
+    printf("TTX_PES[%u] : " x, *ttx_pes_pkt_no - 1); \
+} while(0)
+
+#define PES_PRIVATE_STREAM_1_ID 0xBD
+#define PES_TELETEXT_HEADER_LENGTH 0x24
+
+static void parse_ttx_pes(const uint8_t *pes, size_t size, void *user_data)
+{
+    unsigned int *ttx_pes_pkt_no = user_data;
+    ++(*ttx_pes_pkt_no);
+    
+    TTX_PES_PRINTF("Received PES packet of size %zu.\n", size);
+    /* the PES header contains a lot of data that we really don't need. however,
+     * EN 300 472 specifies some values that should appear in PES headers
+     * containing teletext data, so let's check them at least. */
+    
+    if(pes[0] != 0x00 || pes[1] != 0x00 || pes[2] != 0x01)
+    {
+        TTX_PES_PRINTF("PES magic number incorrect : %hhx%hhx%hhx.\n",
+            pes[0], pes[1], pes[2]);
+        return;
+    }
+    if(pes[3] != PES_PRIVATE_STREAM_1_ID)
+    {
+        TTX_PES_PRINTF("PES stream ID incorrect : %hhx.\n", pes[3]);
+        return;
+    }
+    
+    uint16_t pes_pkt_len;
+    memcpy(&pes_pkt_len, pes+4, sizeof(pes_pkt_len));
+    pes_pkt_len = ntohs(pes_pkt_len);
+    if(pes_pkt_len != size - 6) /* pes_pkt_len doesn't include first 6 bytes. */
+    {
+        TTX_PES_PRINTF("PES packet length mismatch : %hu.\n", pes_pkt_len);
+        return;
+    }
+    if(((pes_pkt_len + 6) % TS_PACKET_DATA_SIZE) != 0)
+    {
+        TTX_PES_PRINT("Declared PES packet length incorrect.\n");
+        return;
+    }
+    
+    if(!(pes[6] & 0x04))
+    {
+        TTX_PES_PRINT("Data alignment indicator set to zero.\n");
+        return;
+    }
+    
+    if(pes[8] != PES_TELETEXT_HEADER_LENGTH)
+    {
+        TTX_PES_PRINTF("Header length %hhu different from expected (%hhu).\n",
+            pes[8], PES_TELETEXT_HEADER_LENGTH);
+        return;
+    }
+    
+    /* there are 9 bytes preceding the PES header length field. the value of the
+     * field itself refers to the number of header bytes following it. adding
+     * these two numbers together, we jump straight to the data. */
+    const uint8_t *ttx_data = pes + 9 + PES_TELETEXT_HEADER_LENGTH;
+    
+    TTX_PES_PRINT("Finished.\n");
+}
+
+#undef PES_PRIVATE_STREAM_1_ID
+#undef PES_TELETEXT_HEADER_LENGTH
+#undef TTX_PES_PRINT
+#undef TTX_PES_PRINTF
 
 /* parse one packet pointed to by 'tspkt', and return a pointer to the first
  * data byte inside the packet. if the TS packet is in any way invalid, or its
@@ -37,44 +125,6 @@ static const uint8_t *parse_ts_packet(const uint8_t *tspkt, uint16_t pid,
     /* ignore the continuity counter. */
     return tspkt + 4;
 }
-
-typedef struct pes_assemble_ctx_
-{
-    uint8_t *buf;
-    size_t size;
-    size_t offset;
-    unsigned int in_pes;
-} pes_assemble_ctx;
-
-typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size, void *user_data);
-
-#define TTX_PES_PRINTF(x, ...) \
-do \
-{ \
-    printf("TTX_PES[%u] : " x, *ttx_pes_pkt_no - 1, __VA_ARGS__); \
-} while(0)
-
-#define TTX_PES_PRINT(x) \
-do \
-{ \
-    printf("TTX_PES[%u] : " x, *ttx_pes_pkt_no - 1); \
-} while(0)
-
-static void parse_ttx_pes(const uint8_t *pes, size_t size, void *user_data)
-{
-    unsigned int *ttx_pes_pkt_no = user_data;
-    ++(*ttx_pes_pkt_no);
-    if(pes[0] != 0x00 || pes[1] != 0x00 || pes[2] != 0x01)
-    {
-        TTX_PES_PRINTF("PES header incorrect : %hhx%hhx%hhx. Bailing...\n",
-            pes[0], pes[1], pes[2]);
-        return;
-    }
-    TTX_PES_PRINT("Finished.\n");
-}
-
-#undef TTX_PES_PRINT
-#undef TTX_PES_PRINTF
 
 static void assemble_pes_from_ts(pes_assemble_ctx *ctx, const uint8_t *ts_data,
     uint16_t pid, pes_ready_fn pes_ready, void *pes_ready_user_data)
