@@ -46,15 +46,38 @@ typedef struct pes_assemble_ctx_
     unsigned int in_pes;
 } pes_assemble_ctx;
 
-typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size);
+typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size, void *user_data);
 
-static void parse_ttx_pes(const uint8_t *pes, size_t size)
+#define TTX_PES_PRINTF(x, ...) \
+do \
+{ \
+    printf("TTX_PES[%u] : " x, *ttx_pes_pkt_no - 1, __VA_ARGS__); \
+} while(0)
+
+#define TTX_PES_PRINT(x) \
+do \
+{ \
+    printf("TTX_PES[%u] : " x, *ttx_pes_pkt_no - 1); \
+} while(0)
+
+static void parse_ttx_pes(const uint8_t *pes, size_t size, void *user_data)
 {
-    
+    unsigned int *ttx_pes_pkt_no = user_data;
+    ++(*ttx_pes_pkt_no);
+    if(pes[0] != 0x00 || pes[1] != 0x00 || pes[2] != 0x01)
+    {
+        TTX_PES_PRINTF("PES header incorrect : %hhx%hhx%hhx. Bailing...\n",
+            pes[0], pes[1], pes[2]);
+        return;
+    }
+    TTX_PES_PRINT("Finished.\n");
 }
 
+#undef TTX_PES_PRINT
+#undef TTX_PES_PRINTF
+
 static void assemble_pes_from_ts(pes_assemble_ctx *ctx, const uint8_t *ts_data,
-    uint16_t pid, pes_ready_fn pes_ready)
+    uint16_t pid, pes_ready_fn pes_ready, void *pes_ready_user_data)
 {
     unsigned int pusi;
     const uint8_t *pes_data = parse_ts_packet(ts_data, pid, &pusi);
@@ -93,7 +116,7 @@ static void assemble_pes_from_ts(pes_assemble_ctx *ctx, const uint8_t *ts_data,
             /* end of a packet that's currently being gathered. fire pes_ready
              * with the current contents and copy the new packet's beginning
              * into the beginning of the buffer. */
-            pes_ready(ctx->buf, ctx->offset);
+            pes_ready(ctx->buf, ctx->offset, pes_ready_user_data);
             memcpy(ctx->buf, pes_data, TS_PACKET_DATA_SIZE);
             ctx->offset = TS_PACKET_DATA_SIZE;
         }
@@ -118,13 +141,15 @@ static void read_ts(FILE *tsfile, uint16_t pid)
     pes_ctx.in_pes = 0;
     if((pes_ctx.buf = malloc(pes_ctx.size)) == NULL) exit(2);
     
+    unsigned int pkt_num = 0;
+    
     while((pkts_read = fread(ts_pkts, TS_PACKET_SIZE,
         TS_BUFSIZE_NUM_PACKETS, tsfile)) > 0)
     {
         for(size_t i = 0 ; i < pkts_read ; ++i)
         {
             assemble_pes_from_ts(&pes_ctx, ts_pkts + (i * TS_PACKET_SIZE), pid,
-                parse_ttx_pes);
+                parse_ttx_pes, &pkt_num);
         }
     }
     free(pes_ctx.buf);
