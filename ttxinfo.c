@@ -48,9 +48,9 @@ typedef struct pes_assemble_ctx_
 
 typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size);
 
-static void parse_ttx(const uint8_t *pkt, size_t size)
+static void parse_ttx_pes(const uint8_t *pes, size_t size)
 {
-    printf("Received PES packet : %p, %zu\n", pkt, size);
+    
 }
 
 static void assemble_pes_from_ts(pes_assemble_ctx *ctx, const uint8_t *ts_data,
@@ -124,7 +124,7 @@ static void read_ts(FILE *tsfile, uint16_t pid)
         for(size_t i = 0 ; i < pkts_read ; ++i)
         {
             assemble_pes_from_ts(&pes_ctx, ts_pkts + (i * TS_PACKET_SIZE), pid,
-                parse_ttx);
+                parse_ttx_pes);
         }
     }
     free(pes_ctx.buf);
