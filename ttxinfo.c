@@ -13,6 +13,45 @@
  * discard all the ones that don't have such a header in parse_ts_packet. */
 #define TS_PACKET_DATA_SIZE 184
 
+#define TTX_PRINTF(x, ...) do { printf("TTX : " x, __VA_ARGS__); } while(0)
+#define TTX_PRINT(x) do { printf("TTX : " x); } while(0)
+
+#define TTX_EBU_DATA_ID_MIN 0x10
+#define TTX_EBU_DATA_ID_MAX 0x1F
+#define TTX_EBU_DATA_UNIT_SIZE 46
+#define TTX_EBU_DATA_FIELD_SIZE 44
+
+static void parse_ttx(const uint8_t *ttx, size_t size)
+{
+    TTX_PRINTF("Got teletext packet of size %zu\n", size);
+    if(ttx[0] < TTX_EBU_DATA_ID_MIN || ttx[0] > TTX_EBU_DATA_ID_MAX)
+    {
+        TTX_PRINTF("Data identifier 0x%hhx is not EBU Teletext.\n", ttx[0]);
+        return;
+    }
+    const unsigned int data_unit_num = (size - 1) / TTX_EBU_DATA_UNIT_SIZE;
+    for(unsigned int i = 0 ; i < data_unit_num ; ++i)
+    {
+        const uint8_t *ttx_data_unit = ttx + 1 + (i * TTX_EBU_DATA_UNIT_SIZE);
+        TTX_PRINTF("data_unit_id = 0x%hhx, field_parity = %u, line_offset = %u"
+            ", framing_code = 0x%hhx, magazine_and_packet_address = 0x%hhx%hhx"
+            "\n",
+            ttx_data_unit[0],
+            ttx_data_unit[2] & 0x20,
+            ttx_data_unit[2] & 0x1f,
+            ttx_data_unit[3],
+            ttx_data_unit[4], ttx_data_unit[5]
+        );
+    }
+}
+
+#undef TTX_EBU_DATA_FIELD_SIZE
+#undef TTX_EBU_DATA_UNIT_SIZE
+#undef TTX_EBU_DATA_ID_MIN
+#undef TTX_EBU_DATA_ID_MAX
+#undef TTX_PRINT
+#undef TTX_PRINTF
+
 typedef void (*pes_ready_fn)(const uint8_t *pes, size_t size, void *user_data);
 
 #define TTX_PES_PRINTF(x, ...) \
@@ -82,7 +121,8 @@ static void parse_ttx_pes(const uint8_t *pes, size_t size, void *user_data)
     /* there are 9 bytes preceding the PES header length field. the value of the
      * field itself refers to the number of header bytes following it. adding
      * these two numbers together, we jump straight to the data. */
-    const uint8_t *ttx_data = pes + 9 + PES_TELETEXT_HEADER_LENGTH;
+    parse_ttx(pes + 9 + PES_TELETEXT_HEADER_LENGTH,
+        size - 9 - PES_TELETEXT_HEADER_LENGTH);
     
     TTX_PES_PRINT("Finished.\n");
 }
