@@ -3,7 +3,6 @@ CFLAGS += -std=c99 -Wall -Wextra -pedantic -g
 all : ttxinfo
 
 ttxinfo : ttxinfo.o
-	$(CC) -o $@ $^
 
 .PHONY : clean all
 
