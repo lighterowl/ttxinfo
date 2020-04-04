@@ -4,7 +4,12 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
-#include <arpa/inet.h>
+//#include <arpa/inet.h>
+
+unsigned int ntohs(unsigned int x)
+{
+    return (((x >> 24) & 0x000000ff) | ((x >> 8) & 0x0000ff00) | ((x << 8) & 0x00ff0000) | ((x << 24) & 0xff000000));
+}
 
 #define TS_PACKET_SIZE 188
 #define TS_SYNC_BYTE 0x47
