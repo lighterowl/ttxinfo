@@ -4,7 +4,10 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
-#include <arpa/inet.h>
+
+static uint16_t read_be16(const uint8_t *bytes) {
+    return (bytes[0] << 8) | bytes[1];
+}
 
 #define TS_PACKET_SIZE 188
 #define TS_SYNC_BYTE 0x47
@@ -91,9 +94,7 @@ static void parse_ttx_pes(const uint8_t *pes, size_t size, void *user_data)
         return;
     }
     
-    uint16_t pes_pkt_len;
-    memcpy(&pes_pkt_len, pes+4, sizeof(pes_pkt_len));
-    pes_pkt_len = ntohs(pes_pkt_len);
+    uint16_t pes_pkt_len = read_be16(pes + 4);
     if(pes_pkt_len != size - 6) /* pes_pkt_len doesn't include first 6 bytes. */
     {
         TTX_PES_PRINTF("PES packet length mismatch : %hu.\n", pes_pkt_len);

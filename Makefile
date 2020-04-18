@@ -1,10 +1,10 @@
-CFLAGS += -std=c99 -Wall -Wextra -pedantic -g
+CFLAGS += -std=c99 -Wall -Wextra -Werror -pedantic -g
+PROGNAME := ttxinfo
+OBJECTS := $(PROGNAME).o
 
-all : ttxinfo
+$(PROGNAME) : $(OBJECTS)
 
-ttxinfo : ttxinfo.o
-
-.PHONY : clean all
+.PHONY : clean
 
 clean :
-	$(RM) ttxinfo.o
+	$(RM) $(OBJECTS)
